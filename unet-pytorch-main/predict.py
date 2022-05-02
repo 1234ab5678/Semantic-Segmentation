@@ -1,6 +1,7 @@
 #----------------------------------------------------#
 #   将单张图片预测、摄像头检测和FPS测试功能
 #   整合到了一个py文件中，通过指定mode进行模式的修改。
+#   功能：单张预测，批量预测，批量大图预测，视频预测，测试集预测
 #----------------------------------------------------#
 import time
 import os
@@ -10,6 +11,60 @@ import numpy as np
 from PIL import Image
 
 from unet import Unet
+
+def get_start_index(rows,cols):
+    arr=[]
+    for i in range(cols):
+        arr.append(i*rows+1)
+    return arr
+
+def stitch(row,col,image_id):
+    print("id="+str(image_id))
+    img_path = './miou_pr_dir/'+image_id+"/"
+    save_path='./miou_pr_dir/'+image_id+"/" 
+    #row=4
+    #col=4
+    stitch_count=col
+    start_time = time.time()
+    start_index = [0] * col
+    start_index = get_start_index(row, col)
+    print(start_index)
+    #os.system("pause")
+    #start_index=[1,14,15,28,29,42,43]
+    if(col%2!=0):
+        stitch_count=stitch_count+1
+
+    index = 0
+    for i in range(0, len(start_index)):#拼接多少行
+        index=index+1
+        startimageindex=start_index[i]
+        print(startimageindex)
+        img = cv2.imread(img_path + str(startimageindex) + ".png")
+        for j in range(startimageindex+1,startimageindex+row,1):
+            print(j)
+            img1 = cv2.imread(img_path + str(j) + ".png")
+            img = np.concatenate((img, img1), axis=1)  # axis=0 按垂直方向，axis=1 按水平方向
+        print("--------------")
+
+        cv2.imwrite(save_path+"res"+str(index)+".png", img)
+
+    img1 = cv2.imread(save_path + "res" + "1.png")
+    img = img1
+    for i in range(2, col + 1):
+        print(i)
+        # img_page = image_names[i]
+        img2 = cv2.imread(save_path + "res" + str(i) + ".png")
+        img = np.concatenate((img, img2), axis=0)  # axis=0 按垂直方向，axis=1 按水平方向
+    cv2.imwrite(os.path.join(img_path, "res.png"), img)
+    end_time = time.time()
+    total_time = end_time - start_time
+    print(total_time)
+
+def gcd(x ,y):
+    if x % y == 0:
+        return y
+    else:
+        return gcd(y, x % y)
 
 if __name__ == "__main__":
     #-------------------------------------------------------------------------#
@@ -23,7 +78,8 @@ if __name__ == "__main__":
     #   'fps'表示测试fps，使用的图片是img里面的street.jpg，详情查看下方注释。
     #   'dir_predict'表示遍历文件夹进行检测并保存。默认遍历img文件夹，保存img_out文件夹，详情查看下方注释。
     #----------------------------------------------------------------------------------------------------------#
-    mode = "batch predict"
+    mode = "batch predict big image"
+    #mode = "batch predict"
     #----------------------------------------------------------------------------------------------------------#
     #   video_path用于指定视频的路径，当video_path=0时表示检测摄像头
     #   想要检测视频，则设置如video_path = "xxx.mp4"即可，代表读取出根目录下的xxx.mp4文件。
@@ -74,14 +130,92 @@ if __name__ == "__main__":
                 r_image = unet.detect_image(image)
                 r_image.show()
 
+    elif mode == "batch predict big image":
+        S=320
+        image_ids = open("./img/image index.txt", 'r').read().splitlines()
+
+        if not os.path.exists("./miou_pr_dir"):
+            os.makedirs("./miou_pr_dir")
+
+        for image_id in tqdm(image_ids):
+            save_path="./miou_pr_dir/"+ image_id
+            if not os.path.exists(save_path):
+                os.makedirs(save_path)
+            image_path = "./img/" + image_id + ".jpg"
+            image = Image.open(image_path)
+            newlength=np.ceil(image.size[0]/S)
+            newheight = np.ceil(image.size[1] / S)
+            newlength=newlength*S
+            newheight=newheight*S#确定新的图像尺寸
+            c=(int)(newlength - image.size[0]) // 2
+            d=(int)(newlength - image.size[0]) // 2
+            a=(int)(newheight - image.size[1]) // 2
+            b=(int)(newheight - image.size[1]) // 2
+            image.save(save_path + "/" + image_id + ".jpg")
+            image = cv2.imread(save_path + "/" + image_id + ".jpg")
+            mirror_img = cv2.copyMakeBorder(image, a ,b ,c ,d, cv2.BORDER_REFLECT)
+            cv2.imwrite(save_path + "/" + image_id + ".png", mirror_img)
+            h = (int)(newlength/S)
+            w = (int)(newheight/S)
+
+            #indexarr=[]
+            numb = 0
+            for i in range(0, w):
+                # 上句W 的值修改过
+                for j in range(0, h):
+                    numb = numb + 1
+                    img = mirror_img[i * S:(i + 1) * S + 0, j * S:(j + 1) * S + 0]
+                    cv2.imwrite(save_path + "/cut" + str(numb) + ".png",img)#切分小块并生成txt
+
+            indexarr = np.array(np.arange(1, (w * h)+1, 1))
+            indexs = indexarr.reshape([len(indexarr), 1])
+            np.savetxt(save_path + "/" + 'image index' + '.txt', indexs,  fmt='%s')
+            image_ids = open(save_path + "/" + 'image index' + '.txt', 'r').read().splitlines()
+
+            for small_image_id in tqdm(image_ids):#开始依次检测小块
+                image_path = save_path + "/cut" + small_image_id + ".png"
+                image = Image.open(image_path)
+                image = unet.detect_image(image)
+                image.save(save_path+ "/" + small_image_id + ".png")
+                image = cv2.imread(save_path+ "/" + small_image_id + ".png")
+                image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+                ret, image = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+                cv2.imwrite(save_path+ "/" + small_image_id + ".png", image)
+            #拼接
+            stitch(h,w,image_id)
+
+            image=Image.open(save_path + "/res" + ".png")
+            box = (c, a, newlength-c, newheight-a)
+            image.crop(box).save(os.path.join(save_path + "/res" + ".png")) #切除多余
+
     elif mode == "batch predict":
-        image_ids = open("./img/batch predict.txt", 'r').read().splitlines()
+        image_ids = open("./img/image index.txt", 'r').read().splitlines()
+        #image_ids = open("./VOCdevkit/ImageSets/Segmentation/test.txt", 'r').read().splitlines()
         #print(image_ids)
         if not os.path.exists("./miou_pr_dir"):
             os.makedirs("./miou_pr_dir")
 
         for image_id in tqdm(image_ids):
-            image_path = "./img/" + image_id + ".jpg"
+            #image_path = "./VOCdevkit/JPEGImages/" + image_id + ".jpg"
+            image_path = "./img/" + image_id + ".png"
+            image = Image.open(image_path)
+            image = unet.detect_image(image)
+            image.save("miou_pr_dir/result" + image_id + ".png")
+            image=cv2.imread("miou_pr_dir/result" + image_id + ".png")
+            image = cv2.cvtColor(image,cv2.COLOR_RGB2GRAY)
+            ret, image = cv2.threshold(image, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+            cv2.imwrite("miou_pr_dir/result" + image_id + ".png",image)
+
+    elif mode == "test set predict":
+        #image_ids = open("./img/image index.txt", 'r').read().splitlines()
+        image_ids = open("./VOCdevkit/ImageSets/Segmentation/test.txt", 'r').read().splitlines()
+        #print(image_ids)
+        if not os.path.exists("./miou_pr_dir"):
+            os.makedirs("./miou_pr_dir")
+
+        for image_id in tqdm(image_ids):
+            image_path = "./VOCdevkit/JPEGImages/" + image_id + ".jpg"
+            #image_path = "./img/" + image_id + ".png"
             image = Image.open(image_path)
             image = unet.detect_image(image)
             image.save("miou_pr_dir/result" + image_id + ".png")
