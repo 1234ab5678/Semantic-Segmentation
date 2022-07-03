@@ -1,4 +1,4 @@
-#2022年7月2日重写，加入早停机制
+#2022年7月2日重写，加入早停机制,免得model背样本
 import os
 import datetime
 
